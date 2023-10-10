@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-20.04
+    outputs:
+      kernel_versions: ${{ steps.kernel_versions.outputs.value }}
+      version_tag: ${{ steps.version_tag.outputs.value }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Format version tag
+        shell: bash
+        id: version_tag
+        run: |
+          TAG=${GITHUB_REF#refs/*/}
+          echo "value=$TAG" >> $GITHUB_OUTPUT
+      - name: Build Kernel Versions
+        id: kernel_versions
+        run: |
+          echo "value=$(cat KERNEL_VERSIONS | jq -ncR '[inputs | select(length>0)]')" >> $GITHUB_OUTPUT
+
+  build:
+    name: Build
+    runs-on: ubuntu-20.04
+    needs: prepare
+    strategy:
+      matrix:
+        version: ${{ fromJson(needs.prepare.outputs.kernel_versions) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      - name: "Build Kernel Version: ${{ matrix.version }}"
+        shell: bash
+        run: |
+          docker build --build-arg KERNEL_VERSION=${{ matrix.version }} \
+            -t kernel-builder:${{ matrix.version }} .
+          docker run --rm -v ${{ github.workspace }}/builds:/output kernel-builder:${{ matrix.version }}
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          path: ${{ github.workspace }}/builds/linux-build-${{ matrix.version }}.tar.gz
+
+  release:
+    name: Release
+    runs-on: ubuntu-20.04
+    needs:
+      - build
+      - prepare
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Download Artifact
+        uses: actions/download-artifact@v3
+        with:
+          path: ${{ github.workspace }}
+      - name: Build Release Body
+        shell: bash
+        run: |
+          kernel_versions=($(cat KERNEL_VERSIONS))
+          md="## Support Kernel Version\n"
+          for version in "${kernel_versions[@]}"; do
+            md+="* $version\n"
+          done
+          echo -ne "$md" > ${{ github.workspace }}/body.md
+      - uses: ncipollo/release-action@v1
+        with:
+          artifacts: "*.tar.gz"
+          bodyFile: ${{ github.workspace }}/body.md
+          tag: ${{ needs.prepare.outputs.version_tag }}
