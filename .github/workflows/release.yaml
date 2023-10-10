@@ -77,6 +77,6 @@ jobs:
           echo -ne "$md" > ${{ github.workspace }}/body.md
       - uses: ncipollo/release-action@v1
         with:
-          artifacts: "*.tar.gz"
+          artifacts: "./artifact/*.tar.gz"
           bodyFile: ${{ github.workspace }}/body.md
           tag: ${{ needs.prepare.outputs.version_tag }}
